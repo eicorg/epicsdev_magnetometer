@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "epicsdev_magnetometer"
+version = "1.0.0"
+authors = [
+  { name="EIC", email="eic@bnl.gov" },
+]
+description = "EPICS PVAccess server for Lakeshore 421 Gaussmeter"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  "p4p", "epicsdev>=3.0.1", "pyserial"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/eicorg/epicsdev_magnetometer"
+"Bug Tracker" = "https://github.com/eicorg/epicsdev_magnetometer/issues"
