@@ -8,7 +8,7 @@ standalone on Linux, macOS, and Windows platforms.
 
 ### Lakeshore 421 Gaussmeter
 
-Communicates over RS-232 (9600 baud, 7 data bits, odd parity, 1 stop bit).
+Communicates via PyVISA (RS-232 settings: 9600 baud, 7 data bits, odd parity, 1 stop bit).
 
 #### Supported SCPI commands
 | PV | SCPI command | Description |
@@ -30,6 +30,7 @@ pip install epicsdev_magnetometer
 
 #### Run
 ```
-python -m epicsdev_magnetometer -p /dev/ttyUSB0
+python -m epicsdev_magnetometer -p ASRL/dev/ttyUSB0::INSTR
 ```
+Pass a VISA resource string, e.g. `ASRL/dev/ttyUSB0::INSTR`.
 Use `-h` for the full list of options.

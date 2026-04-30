@@ -17,7 +17,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-  "p4p", "epicsdev>=3.0.1", "pyserial"
+  "p4p", "epicsdev>=3.0.1", "pyvisa", "pyvisa-py"
 ]
 
 [project.urls]

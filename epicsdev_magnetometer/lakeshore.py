@@ -1,13 +1,14 @@
 """PVAccess server for Lakeshore 421 Gaussmeter."""
 # pylint: disable=invalid-name
-__version__ = 'v1.0.0 2026-04-29'
+__version__ = 'v0.0.2 2026-04-30'# initial review of AI-generated code; *IDN? works.
 
 import sys
 import time
 import argparse
 import threading
-import serial
-from serial import SerialException
+import pyvisa
+from pyvisa import VisaIOError
+from pyvisa import constants as visa_constants
 
 from epicsdev import epicsdev as edev
 
@@ -59,7 +60,8 @@ UNIT_CODES = ['G', 'T', 'O', 'A']
 
 class C_():
     """Namespace for module properties"""
-    dev = None  # serial.Serial device handle
+    dev = None  # pyvisa MessageBasedResource handle
+    rm = None   # pyvisa ResourceManager
 
 
 #``````````````````Device communication```````````````````````````````````````
@@ -69,17 +71,17 @@ def devCmd(cmd):
     reply = None
     try:
         with Threadlock:
-            C_.dev.write((cmd + '\r\n').encode())
             if '?' in cmd:
-                raw = C_.dev.readline()
-                reply = raw.decode(errors='replace').strip()
-    except SerialException:
+                reply = C_.dev.query(cmd).strip()
+            else:
+                C_.dev.write(cmd)
+    except VisaIOError:
         handle_exception(f'in devCmd({cmd})')
     return reply
 
 
 def handle_exception(where):
-    """Handle a serial communication exception."""
+    """Handle a VISA communication exception."""
     exceptionText = str(sys.exc_info()[1])
     msg = f'ERR: {exceptionText}: {where}'
     edev.printe(msg)
@@ -187,29 +189,38 @@ def adopt_device_settings():
             except (ValueError, IndexError):
                 pass
 
-
-def init_serial():
-    """Initialise the RS-232 interface to the Lakeshore 421."""
-    port    = pargs.port
-    baud    = pargs.baud
-    timeout = pargs.timeout
-    edev.printi(f'Opening serial port {port} at {baud} baud')
+def init_visa():
+    """Initialise the VISA interface to the Lakeshore 421."""
+    resource = pargs.port
+    baud = pargs.baud
+    timeout_s = pargs.timeout
+    edev.printi(f'Opening VISA resource {resource}')
     try:
-        C_.dev = serial.Serial(
-            port     = port,
-            baudrate = baud,
-            bytesize = serial.SEVENBITS,
-            parity   = serial.PARITY_ODD,
-            stopbits = serial.STOPBITS_ONE,
-            timeout  = timeout,
-        )
-    except SerialException as exc:
-        edev.printe(f'Could not open serial port {port}: {exc}')
+        C_.rm = pyvisa.ResourceManager()
+
+        open_kwargs = {
+            'timeout': int(timeout_s * 1000),
+            'read_termination': '\r\n',
+            'write_termination': '\r\n',
+        }
+        if not resource.upper().startswith('TCPIP'):
+            open_kwargs.update({
+                'baud_rate': baud,
+                'data_bits': 7,
+                'parity': visa_constants.Parity.odd,
+                'stop_bits': visa_constants.StopBits.one,
+            })
+
+        C_.dev = C_.rm.open_resource(resource, **open_kwargs)
+    except Exception as exc:
+        edev.printe(f'Could not open VISA resource {resource}: {exc}')
         sys.exit(1)
 
-    # Flush any stale data
-    C_.dev.reset_input_buffer()
-    C_.dev.reset_output_buffer()
+    # Clear stale instrument state/data if supported.
+    try:
+        C_.dev.clear()
+    except Exception:
+        pass
 
     # Verify the device responds
     idn = devCmd('*IDN?')
@@ -222,8 +233,8 @@ def init_serial():
 
 
 def init():
-    """Module initialisation: open serial port and validate device."""
-    init_serial()
+    """Module initialisation: open VISA resource and validate device."""
+    init_visa()
 
 
 #``````````````````Polling````````````````````````````````````````````````````
@@ -262,8 +273,9 @@ if __name__ == '__main__':
         'Device name; the PV prefix will be <device><index>:')
     parser.add_argument('-i', '--index', default='0', help=
         'Device index; the PV prefix will be <device><index>:')
-    parser.add_argument('-p', '--port', default='/dev/ttyS0', help=
-        'Serial port to use, e.g. /dev/ttyUSB0 or COM3')
+    parser.add_argument('-p', '--port', default='ASRL/dev/ttyS0::INSTR', help=
+        'VISA resource string. Examples: ASRL/dev/ttyUSB0::INSTR, '
+        'TCPIP::130.199.85.154::2001::SOCKET')
     parser.add_argument('-b', '--baud', type=int, default=9600, help=
         'Serial baud rate')
     parser.add_argument('-t', '--timeout', type=float, default=2.0, help=
@@ -284,7 +296,7 @@ if __name__ == '__main__':
         pargs.putlogPV,
     )
 
-    # Open serial port and verify device
+    # Open VISA resource and verify device
     init()
 
     # Start the server
