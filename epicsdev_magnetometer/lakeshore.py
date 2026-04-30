@@ -1,12 +1,10 @@
 """PVAccess server for Lakeshore 421 Gaussmeter."""
 # pylint: disable=invalid-name
-__version__ = 'v0.0.2 2026-04-30'# initial review of AI-generated code; *IDN? works.
+__version__ = 'v0.0.3 2026-04-30'# The field is published correctly.
 
 import sys
 import time
 import argparse
-import threading
-import pyvisa
 from pyvisa import VisaIOError
 from pyvisa import constants as visa_constants
 
@@ -23,12 +21,11 @@ def myPVDefs():
 
 # Measurement PVs
 ['field',       'Current magnetic field reading (FIELD?)', 0., {U:'G'}],
-['fieldMax',    'Maximum/minimum memorized field (FIELDM?)', 0., {U:'G'}],
 
 # Configuration PVs
-['unit',        'Measurement unit: G=Gauss, T=Tesla, O=Oersted, A=A/m',
-    ['G', 'T', 'O', 'A'],
-    {F:'WD', SET:set_unit}],
+#['unit',        'Measurement unit: G=Gauss, T=Tesla, O=Oersted, A=A/m',
+#    ['G', 'T', 'O', 'A'],
+#    {F:'WD', SET:set_unit}],
 ['acdc',        'Measurement mode: DC or AC',
     ['DC', 'AC'],
     {F:'WD', SET:set_acdc}],
@@ -51,12 +48,8 @@ def myPVDefs():
     return pvDefs
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #``````````````````Constants``````````````````````````````````````````````````
-Threadlock = threading.Lock()
 OK = 0
 NotOK = -1
-
-# Mapping from unit index to Lakeshore UNIT command parameter
-UNIT_CODES = ['G', 'T', 'O', 'A']
 
 class C_():
     """Namespace for module properties"""
@@ -97,27 +90,17 @@ def set_instrCmdS(cmd, *_):
         edev.publish('instrCmdR', reply)
     edev.publish('instrCmdS', cmd)
 
-
-def set_unit(value, *_):
-    """Setter for the unit PV. Sends UNIT <code> command."""
-    code = str(value)
-    devCmd(f'UNIT {code}')
-    edev.publish('unit', value)
-
-
 def set_acdc(value, *_):
     """Setter for the acdc PV. Sends ACDC <0|1> command."""
     index = ['DC', 'AC'].index(str(value))
     devCmd(f'ACDC {index}')
     edev.publish('acdc', value)
 
-
 def set_autoRange(value, *_):
     """Setter for the autoRange PV. Sends AUTO <0|1> command."""
     index = ['Off', 'On'].index(str(value))
     devCmd(f'AUTO {index}')
     edev.publish('autoRange', value)
-
 
 def set_alarm(value, pv, *_):
     """Setter for alarmEnable, alarmHigh, alarmLow PVs.
@@ -131,7 +114,6 @@ def set_alarm(value, pv, *_):
     low    = float(edev.pvv('alarmLow'))
     devCmd(f'ALARM {status},{high},{low}')
 
-
 #``````````````````Initialisation`````````````````````````````````````````````
 def serverStateChanged(newState: str):
     """Called when the server state changes."""
@@ -140,7 +122,6 @@ def serverStateChanged(newState: str):
         adopt_device_settings()
     elif newState == 'Stop':
         edev.printi('serverStateChanged: Stop')
-
 
 def adopt_device_settings():
     """Read current device settings and update PVs."""
@@ -152,12 +133,7 @@ def adopt_device_settings():
 
     probe = devCmd('TYPE?')
     if probe:
-        edev.publish('probeType', probe)
-
-    # Read unit setting
-    unit_reply = devCmd('UNIT?')
-    if unit_reply and unit_reply in UNIT_CODES:
-        edev.publish('unit', unit_reply)
+        edev.publish('probeType', {'0':'HSE','1':'HST',2,probe)
 
     # Read ACDC setting
     acdc_reply = devCmd('ACDC?')
@@ -231,29 +207,27 @@ def init_visa():
     if 'LAKESHORE' not in idn.upper() and '421' not in idn:
         edev.printw(f'Unexpected IDN response: {idn}')
 
+    # Set units to Gauss for consistency
+    devCmd('UNIT G')
 
 def init():
     """Module initialisation: open VISA resource and validate device."""
     init_visa()
 
-
 #``````````````````Polling````````````````````````````````````````````````````
 def poll():
     """Read current field and memorised peak field, publish to PVs."""
     field_reply = devCmd('FIELD?')
+    field_mult = devCmd('FIELDM?')
     if field_reply is not None:
+        edev.printvv(f'FIELD? reply: {field_reply}, FIELDM? reply: {field_mult}')
+        multiplier = {'m':1e-3, 'k':1e3, 'M':1e6}.get(field_mult.strip(), 1)
+        v = float(field_reply.strip()) * multiplier
+        edev.printv(f'Parsed field value: {v} G')
         try:
-            edev.publish('field', float(field_reply.strip()))
+            edev.publish('field', v)
         except ValueError:
             edev.printw(f'Unexpected FIELD? reply: {field_reply}')
-
-    fieldm_reply = devCmd('FIELDM?')
-    if fieldm_reply is not None:
-        try:
-            edev.publish('fieldMax', float(fieldm_reply.strip()))
-        except ValueError:
-            edev.printw(f'Unexpected FIELDM? reply: {fieldm_reply}')
-
 
 #``````````````````Main```````````````````````````````````````````````````````
 if __name__ == '__main__':
@@ -269,7 +243,7 @@ if __name__ == '__main__':
         'If a file name is given, it is used for autosave.')
     parser.add_argument('-c', '--recall', action='store_false', help=
         'Do not load initial values from the pvCache file.')
-    parser.add_argument('-d', '--device', default='mag421', help=
+    parser.add_argument('-d', '--device', default='mag421_', help=
         'Device name; the PV prefix will be <device><index>:')
     parser.add_argument('-i', '--index', default='0', help=
         'Device index; the PV prefix will be <device><index>:')
