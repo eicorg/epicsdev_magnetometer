@@ -1,13 +1,12 @@
 """PVAccess server for Lakeshore 421 Gaussmeter."""
 # pylint: disable=invalid-name
-__version__ = 'v0.0.3 2026-04-30'# The field is published correctly.
+__version__ = 'v0.0.4 2026-04-30'# Probe type decoded, added instrCmdS/R PVs
 
 import sys
 import time
 import argparse
-from pyvisa import VisaIOError
-from pyvisa import constants as visa_constants
-
+from threading import Lock
+from pyvisa import VisaIOError, ResourceManager, constants as visa_constants
 from epicsdev import epicsdev as edev
 
 #``````````````````PVs defined here```````````````````````````````````````````
@@ -48,6 +47,7 @@ def myPVDefs():
     return pvDefs
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #``````````````````Constants``````````````````````````````````````````````````
+Threadlock = Lock()
 OK = 0
 NotOK = -1
 
@@ -133,7 +133,7 @@ def adopt_device_settings():
 
     probe = devCmd('TYPE?')
     if probe:
-        edev.publish('probeType', {'0':'HSE','1':'HST',2,probe)
+        edev.publish('probeType', {'0':'HSE','1':'HST','2':'UHS'}.get(probe.strip(), probe))
 
     # Read ACDC setting
     acdc_reply = devCmd('ACDC?')
@@ -172,7 +172,7 @@ def init_visa():
     timeout_s = pargs.timeout
     edev.printi(f'Opening VISA resource {resource}')
     try:
-        C_.rm = pyvisa.ResourceManager()
+        C_.rm = ResourceManager()
 
         open_kwargs = {
             'timeout': int(timeout_s * 1000),
