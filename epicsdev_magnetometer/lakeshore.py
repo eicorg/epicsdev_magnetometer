@@ -1,6 +1,6 @@
 """PVAccess server for Lakeshore 421 Gaussmeter."""
 # pylint: disable=invalid-name
-__version__ = 'v0.0.5 2026-05-08'#Added a measure PV
+__version__ = 'v0.0.6 2026-05-08'#publish measure in its setter
 
 import sys
 import time
@@ -116,7 +116,7 @@ def set_alarm(value, pv, *_):
 
 def set_measure(value, *_):
     """Setter for the measure PV"""
-    print(f'set_measure: value={value}')
+    edev.publish('measure', value)
     if value == 'Periodic':
         return
     if value == 'OneShot':
@@ -239,7 +239,8 @@ def measure_once():
 
 def poll():
     """Main polling function: read measurements and update PVs."""
-    if edev.pvv('measure') == 'Periodic':
+    mode = str(edev.pvv('measure'))
+    if mode == 'Periodic':
         measure_once()
 
 #``````````````````Main```````````````````````````````````````````````````````
