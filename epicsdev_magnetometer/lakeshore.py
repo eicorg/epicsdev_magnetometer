@@ -1,6 +1,6 @@
 """PVAccess server for Lakeshore 421 Gaussmeter."""
 # pylint: disable=invalid-name
-__version__ = 'v0.0.4 2026-04-30'# Probe type decoded, added instrCmdS/R PVs
+__version__ = 'v0.0.5 2026-05-08'#Added a measure PV
 
 import sys
 import time
@@ -14,12 +14,15 @@ def myPVDefs():
     """PV definitions for Lakeshore 421 Gaussmeter."""
     F, SET, U = 'features', 'setter', 'units'
     pvDefs = [
+# Measurement PVs
+['field',       'Current magnetic field reading', 0., {U:'G'}],
+['measure',  'Measuring mode. The Scan mode is for control from an external program, e.g. for field sweeps.',# In this mode, the field is updated only when the measure PV is written to.',
+  ['Periodic','OneShot','Scan'], {F:'WD', SET:set_measure}],
+['position',    'Current position of the probe', 0., {F:'W', U:'mm'}],
+
 # Instrument identification
 ['idn',         'Instrument identification (*IDN?)', ''],
 ['probeType',   'Probe type (TYPE?)', ''],
-
-# Measurement PVs
-['field',       'Current magnetic field reading (FIELD?)', 0., {U:'G'}],
 
 # Configuration PVs
 #['unit',        'Measurement unit: G=Gauss, T=Tesla, O=Oersted, A=A/m',
@@ -56,7 +59,6 @@ class C_():
     dev = None  # pyvisa MessageBasedResource handle
     rm = None   # pyvisa ResourceManager
 
-
 #``````````````````Device communication```````````````````````````````````````
 def devCmd(cmd):
     """Send a command to the Lakeshore 421 and return the reply (if any)."""
@@ -72,14 +74,12 @@ def devCmd(cmd):
         handle_exception(f'in devCmd({cmd})')
     return reply
 
-
 def handle_exception(where):
     """Handle a VISA communication exception."""
     exceptionText = str(sys.exc_info()[1])
     msg = f'ERR: {exceptionText}: {where}'
     edev.printe(msg)
     return NotOK
-
 
 #``````````````````Setters````````````````````````````````````````````````````
 def set_instrCmdS(cmd, *_):
@@ -113,6 +113,14 @@ def set_alarm(value, pv, *_):
     high   = float(edev.pvv('alarmHigh'))
     low    = float(edev.pvv('alarmLow'))
     devCmd(f'ALARM {status},{high},{low}')
+
+def set_measure(value, *_):
+    """Setter for the measure PV"""
+    print(f'set_measure: value={value}')
+    if value == 'Periodic':
+        return
+    if value == 'OneShot':
+        measure_once()
 
 #``````````````````Initialisation`````````````````````````````````````````````
 def serverStateChanged(newState: str):
@@ -215,7 +223,7 @@ def init():
     init_visa()
 
 #``````````````````Polling````````````````````````````````````````````````````
-def poll():
+def measure_once():
     """Read current field and memorised peak field, publish to PVs."""
     field_reply = devCmd('FIELD?')
     field_mult = devCmd('FIELDM?')
@@ -228,6 +236,11 @@ def poll():
             edev.publish('field', v)
         except ValueError:
             edev.printw(f'Unexpected FIELD? reply: {field_reply}')
+
+def poll():
+    """Main polling function: read measurements and update PVs."""
+    if edev.pvv('measure') == 'Periodic':
+        measure_once()
 
 #``````````````````Main```````````````````````````````````````````````````````
 if __name__ == '__main__':
