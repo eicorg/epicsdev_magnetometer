@@ -1,6 +1,6 @@
 """PVAccess server for Lakeshore 421 Gaussmeter."""
 # pylint: disable=invalid-name
-__version__ = 'v0.0.6 2026-05-08'#publish measure in its setter
+__version__ = 'v0.0.8 2026-05-13'# do not publish 'measure' in its setter, 'update' PV. 'update is u32.
 
 import sys
 import time
@@ -12,13 +12,15 @@ from epicsdev import epicsdev as edev
 #``````````````````PVs defined here```````````````````````````````````````````
 def myPVDefs():
     """PV definitions for Lakeshore 421 Gaussmeter."""
-    F, SET, U = 'features', 'setter', 'units'
+    F, SET, U, T = 'features', 'setter', 'units', 'type'
     pvDefs = [
 # Measurement PVs
 ['field',       'Current magnetic field reading', 0., {U:'G'}],
 ['measure',  'Measuring mode. The Scan mode is for control from an external program, e.g. for field sweeps.',# In this mode, the field is updated only when the measure PV is written to.',
-  ['Periodic','OneShot','Scan'], {F:'WD', SET:set_measure}],
+  ['Periodic','OneShot','Scan','Stop'], {F:'WD', SET:set_measure}],
 ['position',    'Current position of the probe', 0., {F:'W', U:'mm'}],
+['update', 'Update trigger: write any value to trigger an update of the field PV',
+  0, {F:'W', T:'u32', SET:measure_once}],
 
 # Instrument identification
 ['idn',         'Instrument identification (*IDN?)', ''],
@@ -84,23 +86,20 @@ def handle_exception(where):
 #``````````````````Setters````````````````````````````````````````````````````
 def set_instrCmdS(cmd, *_):
     """Setter for the instrCmdS PV: send a raw SCPI command."""
-    edev.publish('instrCmdR', '')
     reply = devCmd(cmd)
-    if reply is not None:
-        edev.publish('instrCmdR', reply)
-    edev.publish('instrCmdS', cmd)
+    if reply is  None:
+        reply = ''
+    edev.publish('instrCmdR', reply)
 
 def set_acdc(value, *_):
     """Setter for the acdc PV. Sends ACDC <0|1> command."""
     index = ['DC', 'AC'].index(str(value))
     devCmd(f'ACDC {index}')
-    edev.publish('acdc', value)
 
 def set_autoRange(value, *_):
     """Setter for the autoRange PV. Sends AUTO <0|1> command."""
     index = ['Off', 'On'].index(str(value))
     devCmd(f'AUTO {index}')
-    edev.publish('autoRange', value)
 
 def set_alarm(value, pv, *_):
     """Setter for alarmEnable, alarmHigh, alarmLow PVs.
@@ -108,7 +107,6 @@ def set_alarm(value, pv, *_):
     Command syntax: ALARM <status>,<high>,<low>
     """
     pvname = pv.name
-    edev.publish(pvname, value)
     status = ['Off', 'On'].index(str(edev.pvv('alarmEnable')))
     high   = float(edev.pvv('alarmHigh'))
     low    = float(edev.pvv('alarmLow'))
@@ -116,7 +114,6 @@ def set_alarm(value, pv, *_):
 
 def set_measure(value, *_):
     """Setter for the measure PV"""
-    edev.publish('measure', value)
     if value == 'Periodic':
         return
     if value == 'OneShot':
@@ -223,15 +220,22 @@ def init():
     init_visa()
 
 #``````````````````Polling````````````````````````````````````````````````````
-def measure_once():
+def measure_once(*_):
     """Read current field and memorised peak field, publish to PVs."""
     field_reply = devCmd('FIELD?')
     field_mult = devCmd('FIELDM?')
     if field_reply is not None:
-        edev.printvv(f'FIELD? reply: {field_reply}, FIELDM? reply: {field_mult}')
+        #edev.printvv(f'FIELD? reply: {field_reply}, FIELDM? reply: {field_mult}')
         multiplier = {'m':1e-3, 'k':1e3, 'M':1e6}.get(field_mult.strip(), 1)
-        v = float(field_reply.strip()) * multiplier
-        edev.printv(f'Parsed field value: {v} G')
+        try:
+            v = float(field_reply.strip()) * multiplier
+        except ValueError:
+            if field_reply.startswith('OL'):
+                edev.printw('Field reading is over-range')
+            else:
+                edev.printw(f'Could not parse FIELD? reply: {field_reply}')
+            return NotOK
+        #edev.printv(f'Parsed field value: {v} G')
         try:
             edev.publish('field', v)
         except ValueError:
@@ -261,18 +265,20 @@ if __name__ == '__main__':
         'Device name; the PV prefix will be <device><index>:')
     parser.add_argument('-i', '--index', default='0', help=
         'Device index; the PV prefix will be <device><index>:')
-    parser.add_argument('-p', '--port', default='ASRL/dev/ttyS0::INSTR', help=
+    parser.add_argument('-p', '--putlogPV', nargs='?', default='', help=
+'PV name for logging put operations. If given without argument, then putlog is disabled. If not given, then putlog is set to "putlog:dump".')
+    parser.add_argument('-P', '--port', default='ASRL/dev/ttyS0::INSTR', help=
         'VISA resource string. Examples: ASRL/dev/ttyUSB0::INSTR, '
         'TCPIP::130.199.85.154::2001::SOCKET')
     parser.add_argument('-b', '--baud', type=int, default=9600, help=
         'Serial baud rate')
     parser.add_argument('-t', '--timeout', type=float, default=2.0, help=
         'Serial read timeout in seconds')
-    parser.add_argument('--putlogPV', default=None, help=
-        'Name of the PV where put operations are logged.')
     parser.add_argument('-v', '--verbose', action='count', default=0, help=
         'Show more log messages (-vv: show even more)')
     pargs = parser.parse_args()
+    if pargs.putlogPV == '':
+        pargs.putlogPV = 'putlog:dump'
     print(f'pargs: {pargs}')
 
     # Initialise epicsdev and create PVs
