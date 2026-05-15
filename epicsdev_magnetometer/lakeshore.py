@@ -3,7 +3,7 @@
 __version__ = 'v0.0.8 2026-05-13'# do not publish 'measure' in its setter, 'update' PV. 'update is u32.
 
 import sys
-import time
+#import time
 import argparse
 from threading import Lock
 from pyvisa import VisaIOError, ResourceManager, constants as visa_constants
@@ -106,7 +106,7 @@ def set_alarm(value, pv, *_):
     Re-sends the full ALARM command with current values after any change.
     Command syntax: ALARM <status>,<high>,<low>
     """
-    pvname = pv.name
+    #pvname = pv.name
     status = ['Off', 'On'].index(str(edev.pvv('alarmEnable')))
     high   = float(edev.pvv('alarmHigh'))
     low    = float(edev.pvv('alarmLow'))
