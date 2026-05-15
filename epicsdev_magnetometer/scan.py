@@ -1,7 +1,7 @@
 """Scan the magnetometer field as a function of position and coil currents.
 """
 # pylint: disable=invalid-name
-___version__ = 'v0.0.1 2026-05-13'#
+__version__ = 'v0.0.3 2026-05-13'# Argument parsing. Delay before field sensing, Zero coils only on Stop.
 import time
 from time import perf_counter as timer
 from threading import Event
@@ -14,7 +14,6 @@ IFace = Context('pva')
 EventScan = Event()
 EventExit = Event()
 Scan,Stop = 2,3# Workaround: hardcoded index of Scan and Stop choice of magnetometer PV 'measure'
-SleepTime = 0.# time to wait for the measurement to complete; adjust as needed
 
 class C_():# mutable variables
     magnetometer = 'mag421_0:'# PV prefix for the magnetometer; the position PV will be <magnetometer>position, the field PV will be <magnetometer>field, etc.
@@ -28,6 +27,7 @@ class C_():# mutable variables
     writer = None# CSV writer object for logging the results; set in the main block after opening the file
     subscription = None# PV subscription object for the 'measure' PV; set in the main block after creating the subscription
     steps = 0
+    sleepTime = 0.# time to wait for the measurement to complete; adjust as needed
 
 def _printTime():
     return time.strftime("%m%d:%H%M%S")
@@ -89,10 +89,12 @@ def session():
                     IFace.put(C_.setPoints['ICC2'][0], icc2)
                     perf['coil'] += timer() - ts
                     ts = timer()
+
+                    time.sleep(C_.sleepTime) # wait for magnet field to stabilize
+
                     IFace.put(C_.magnetometer+'update', C_.steps) # trigger measurement
                     perf['update'] += timer() - ts
                     C_.steps += 1
-                    time.sleep(SleepTime) # wait for the measurement to complete
                     ts = timer()
                     field = IFace.get(C_.magnetometer+'field')
                     perf['field'] += timer() - ts
@@ -100,17 +102,44 @@ def session():
         printi(f'Recorded {C_.steps} points. You can change position and scan again')
     return f'Session completed with {C_.steps} steps'
 
-def finish_all():
-    """Set all solenoids to 0 and close PV subscription."""
-    C_.subscription.close()
-    print('Setting all solenoids to 0.')
+def zero_coils():
+    print('Setting all coils to 0.')
     IFace.put(C_.setPoints['LCC'][0], 0.)
     IFace.put(C_.setPoints['ICC1'][0], 0.)
     IFace.put(C_.setPoints['ICC2'][0], 0.)
     IFace.put(C_.magnetometer+'measure', 'OneShot') # reset measurement mode
 
+def finish_all():
+    """Set all coils to 0 and close PV subscription."""
+    C_.subscription.close()
+    zero_coils()
+
 if __name__ == "__main__":
     """Main entry point: set up CSV file and start the session."""
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=__version__,
+    )
+    parser.add_argument('--lcc', nargs='*', help=
+        'Start, stop, step for set points of LCC coil',
+        default=C_.setPoints['LCC'][1:4], type=float)
+    parser.add_argument('--icc1', nargs='*', help=
+        'Start, stop, step for set points of ICC1 coil',
+        default=C_.setPoints['ICC1'][1:4], type=float)
+    parser.add_argument('--icc2', nargs='*', help=
+        'Start, stop, step for set points of ICC2 coil',
+        default=C_.setPoints['ICC2'][1:4], type=float)
+    parser.add_argument('--delay', default=C_.sleepTime, type=float, help=
+    'Time to wait for the measurement to complete (s)')
+    pargs = parser.parse_args()
+    print(f'pargs: {pargs}')
+
+    C_.sleepTime = pargs.delay
+    # Update the set point ranges based on command line arguments
+    C_.setPoints['LCC'][1:4] = pargs.lcc
+    C_.setPoints['ICC1'][1:4] = pargs.icc1
+    C_.setPoints['ICC2'][1:4] = pargs.icc2
 
     # Issue Stop command to exit other sessions and ensure we start in a known state
     IFace.put(C_.magnetometer+'measure', 'Stop')
@@ -126,7 +155,7 @@ if __name__ == "__main__":
     EventScan.wait()
 
     # Open CSV file for logging; filename includes timestamp for uniqueness
-    fname = time.strftime('magsan_%Y%m%d_%H%M.csv')
+    fname = time.strftime('magspan_%Y%m%d_%H%M.csv')
 
     # Write header and start session
     with open(fname, 'w', newline='') as csvfile:
